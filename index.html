@@ -76,6 +76,20 @@ h1 .mini i:nth-child(odd) { background: var(--p1); }
 h1 .mini i:nth-child(even) { background: var(--p2); }
 .hint { margin: 0; color: var(--muted); font-size: 0.875rem; }
 
+/* Opponent and level pickers */
+.setup { display: flex; gap: 10px; flex-wrap: wrap; justify-content: space-between; }
+.seg { display: inline-flex; gap: 2px; padding: 3px; background: var(--surface); border: 2px solid var(--line); border-radius: 12px; }
+.seg button {
+  appearance: none; border: 0; margin: 0;
+  background: transparent; color: var(--muted);
+  font: 700 0.875rem var(--font-body);
+  min-height: 36px; padding: 6px 12px;
+  border-radius: 9px; cursor: pointer;
+}
+.seg button[aria-pressed="true"] { background: var(--fg); color: var(--bg); }
+.seg button:focus-visible { outline: 3px solid var(--focus); outline-offset: 1px; }
+.player input[readonly] { cursor: default; border-bottom-color: transparent; }
+
 /* Scoreboard */
 .scores { display: grid; grid-template-columns: 1fr auto 1fr; gap: 10px; align-items: stretch; }
 .player {
@@ -226,8 +240,20 @@ h1 .mini i:nth-child(even) { background: var(--p2); }
 <div class="wrap">
   <header>
     <h1><span class="mini" aria-hidden="true"><i></i><i></i><i></i><i></i></span>Connect Four</h1>
-    <p class="hint">Tap a column. Pass the phone.</p>
+    <p class="hint" id="hint">Tap a column. Pass the phone.</p>
   </header>
+
+  <section class="setup" aria-label="Game setup">
+    <div class="seg" role="group" aria-label="Opponent">
+      <button type="button" data-mode="pvp">Friend</button>
+      <button type="button" data-mode="cpu">Computer</button>
+    </div>
+    <div class="seg" role="group" aria-label="Computer level" id="levels">
+      <button type="button" data-level="easy">Easy</button>
+      <button type="button" data-level="medium">Medium</button>
+      <button type="button" data-level="hard">Hard</button>
+    </div>
+  </section>
 
   <section class="scores" aria-label="Scoreboard">
     <div class="player" data-p="1" id="card1">
@@ -265,31 +291,154 @@ h1 .mini i:nth-child(even) { background: var(--p2); }
 
 <script>
 (() => {
-  const COLS = 7, ROWS = 6;
+  const COLS = 7, ROWS = 6, CELLS = COLS * ROWS;
   const KEY = "connect-four-v1";
+  const ORDER = [3, 2, 4, 1, 5, 0, 6]; // try the middle first
+  const DEPTH = { medium: 4, hard: 7 };
   const $ = id => document.getElementById(id);
 
-  let S;
+  let S, cpuTimer = null, thinking = false;
   const fresh = () => ({
-    board: Array(COLS * ROWS).fill(0),
+    board: Array(CELLS).fill(0),
     moves: [],
     starter: 1,
     turn: 1,
     winner: 0,      // 0 = playing, 1/2 = winner, 3 = draw
     winCells: [],
-    scores: [0, 0, 0], // p1 wins, p2 wins, draws
+    scores: [0, 0, 0], // p1 wins, p2 wins, draws (two players)
     names: ["Red", "Yellow"],
+    mode: "pvp",    // "pvp" or "cpu"; the computer plays yellow
+    level: "medium",
+    cpuScores: { easy: [0, 0, 0], medium: [0, 0, 0], hard: [0, 0, 0] },
   });
 
   function load(seed) {
     if (seed && seed.board) return seed;
     try {
       const saved = JSON.parse(localStorage.getItem(KEY));
-      if (saved && Array.isArray(saved.board) && saved.board.length === COLS * ROWS) return { ...fresh(), ...saved };
+      if (saved && Array.isArray(saved.board) && saved.board.length === CELLS) {
+        const base = fresh();
+        return { ...base, ...saved, cpuScores: { ...base.cpuScores, ...(saved.cpuScores || {}) } };
+      }
     } catch (e) {}
     return fresh();
   }
   function save() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) {} }
+
+  const vsCpu = () => S.mode === "cpu";
+  const isCpuTurn = () => vsCpu() && !S.winner && S.turn === 2;
+  const tally = () => vsCpu() ? S.cpuScores[S.level] : S.scores;
+
+  // Board rules, on any board array
+  function lowest(b, c) {
+    for (let r = ROWS - 1; r >= 0; r--) if (!b[r * COLS + c]) return r;
+    return -1;
+  }
+  function lineThrough(b, r, c, p) {
+    const dirs = [[0, 1], [1, 0], [1, 1], [1, -1]];
+    for (const [dr, dc] of dirs) {
+      const cells = [[r, c]];
+      for (const s of [1, -1]) {
+        let rr = r + dr * s, cc = c + dc * s;
+        while (rr >= 0 && rr < ROWS && cc >= 0 && cc < COLS && b[rr * COLS + cc] === p) {
+          cells.push([rr, cc]); rr += dr * s; cc += dc * s;
+        }
+      }
+      if (cells.length >= 4) return cells.map(([a, k]) => a * COLS + k);
+    }
+    return null;
+  }
+  function winsWith(b, c, p) {
+    const r = lowest(b, c);
+    if (r < 0) return false;
+    const i = r * COLS + c;
+    b[i] = p;
+    const w = !!lineThrough(b, r, c, p);
+    b[i] = 0;
+    return w;
+  }
+
+  // Computer player: minimax with alpha-beta pruning (negamax form)
+  const WIN = 1e6;
+  function evaluate(b, p) {
+    const o = 3 - p;
+    let s = 0;
+    for (let r = 0; r < ROWS; r++) {
+      const v = b[r * COLS + 3];
+      if (v === p) s += 3; else if (v === o) s -= 3;
+    }
+    const dirs = [[0, 1], [1, 0], [1, 1], [1, -1]];
+    for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) for (const [dr, dc] of dirs) {
+      const er = r + 3 * dr, ec = c + 3 * dc;
+      if (er < 0 || er >= ROWS || ec < 0 || ec >= COLS) continue;
+      let mine = 0, theirs = 0;
+      for (let k = 0; k < 4; k++) {
+        const v = b[(r + k * dr) * COLS + c + k * dc];
+        if (v === p) mine++; else if (v === o) theirs++;
+      }
+      if (mine && theirs) continue;
+      if (mine === 3) s += 5; else if (mine === 2) s += 2;
+      else if (theirs === 3) s -= 4; else if (theirs === 2) s -= 2;
+    }
+    return s;
+  }
+  function negamax(b, depth, alpha, beta, p, filled) {
+    if (filled === CELLS) return 0;
+    for (const c of ORDER) if (winsWith(b, c, p)) return WIN + depth;
+    if (depth === 0) return evaluate(b, p);
+    let best = -Infinity;
+    for (const c of ORDER) {
+      const r = lowest(b, c);
+      if (r < 0) continue;
+      const i = r * COLS + c;
+      b[i] = p;
+      const v = -negamax(b, depth - 1, -beta, -alpha, 3 - p, filled + 1);
+      b[i] = 0;
+      if (v > best) best = v;
+      if (best > alpha) alpha = best;
+      if (alpha >= beta) break;
+    }
+    return best;
+  }
+  function bestMove(b, p, depth) {
+    const filled = b.filter(Boolean).length;
+    let best = -Infinity, pick = -1;
+    for (const c of ORDER) {
+      const r = lowest(b, c);
+      if (r < 0) continue;
+      if (winsWith(b, c, p)) return c;
+      const i = r * COLS + c;
+      b[i] = p;
+      const v = -negamax(b, depth - 1, -Infinity, -best, 3 - p, filled + 1);
+      b[i] = 0;
+      if (v > best || pick < 0) { best = v; pick = c; }
+    }
+    return pick;
+  }
+  function easyMove(b, p) {
+    const open = ORDER.filter(c => lowest(b, c) >= 0);
+    for (const c of open) if (winsWith(b, c, p)) return c;
+    if (Math.random() < 0.5) for (const c of open) if (winsWith(b, c, 3 - p)) return c;
+    const weights = open.map(c => 4 - Math.abs(3 - c));
+    let roll = Math.random() * weights.reduce((a, w) => a + w, 0);
+    for (let k = 0; k < open.length; k++) if ((roll -= weights[k]) < 0) return open[k];
+    return open[0];
+  }
+  function cpuPick() {
+    const b = S.board.slice();
+    return S.level === "easy" ? easyMove(b, 2) : bestMove(b, 2, DEPTH[S.level]);
+  }
+
+  function scheduleCpu() {
+    clearTimeout(cpuTimer);
+    thinking = isCpuTurn();
+    if (!thinking) return;
+    cpuTimer = setTimeout(() => {
+      const c = cpuPick();
+      thinking = false;
+      play(c);
+    }, 650);
+  }
 
   const discEls = [], colEls = [], aimEls = [];
   function build() {
@@ -303,7 +452,7 @@ h1 .mini i:nth-child(even) { background: var(--p2); }
     for (let c = 0; c < COLS; c++) {
       const b = document.createElement("button");
       b.type = "button";
-      b.addEventListener("click", () => drop(c));
+      b.addEventListener("click", () => humanDrop(c));
       b.addEventListener("pointerenter", () => aimAt(c));
       b.addEventListener("focus", () => aimAt(c));
       b.addEventListener("pointerleave", () => aimAt(-1));
@@ -317,69 +466,93 @@ h1 .mini i:nth-child(even) { background: var(--p2); }
   }
 
   function aimAt(c) {
-    aimEls.forEach((s, i) => s.classList.toggle("on", i === c && !S.winner && S.board[c] === 0));
+    aimEls.forEach((s, i) => s.classList.toggle("on", i === c && !S.winner && !isCpuTurn() && S.board[c] === 0));
   }
 
-  function lowestEmpty(c) {
-    for (let r = ROWS - 1; r >= 0; r--) if (!S.board[r * COLS + c]) return r;
-    return -1;
+  function humanDrop(c) {
+    if (isCpuTurn()) return;
+    play(c);
   }
 
-  function lineThrough(r, c, p) {
-    const dirs = [[0, 1], [1, 0], [1, 1], [1, -1]];
-    for (const [dr, dc] of dirs) {
-      const cells = [[r, c]];
-      for (const s of [1, -1]) {
-        let rr = r + dr * s, cc = c + dc * s;
-        while (rr >= 0 && rr < ROWS && cc >= 0 && cc < COLS && S.board[rr * COLS + cc] === p) {
-          cells.push([rr, cc]); rr += dr * s; cc += dc * s;
-        }
-      }
-      if (cells.length >= 4) return cells.map(([a, b]) => a * COLS + b);
-    }
-    return null;
-  }
-
-  function drop(c) {
+  function play(c) {
     if (S.winner) return;
-    const r = lowestEmpty(c);
+    const r = lowest(S.board, c);
     if (r < 0) return;
     const i = r * COLS + c, p = S.turn;
     S.board[i] = p;
     S.moves.push(i);
-    const win = lineThrough(r, c, p);
-    if (win) { S.winner = p; S.winCells = win; S.scores[p - 1]++; }
-    else if (S.moves.length === COLS * ROWS) { S.winner = 3; S.scores[2]++; }
+    const win = lineThrough(S.board, r, c, p);
+    if (win) { S.winner = p; S.winCells = win; tally()[p - 1]++; }
+    else if (S.moves.length === CELLS) { S.winner = 3; tally()[2]++; }
     else S.turn = 3 - p;
     save();
+    scheduleCpu();
     render(i, r + 1);
     if (navigator.vibrate) try { navigator.vibrate(12); } catch (e) {}
   }
 
-  function undo() {
-    if (!S.moves.length) return;
+  // Against the computer, undo takes back your last move and its reply
+  const canUndo = () => vsCpu() ? S.moves.some(i => S.board[i] === 1) : S.moves.length > 0;
+  function undoOne() {
     const i = S.moves.pop();
     const p = S.board[i];
     S.board[i] = 0;
-    if (S.winner === 3) S.scores[2]--;
-    else if (S.winner) S.scores[S.winner - 1]--;
+    if (S.winner === 3) tally()[2]--;
+    else if (S.winner) tally()[S.winner - 1]--;
     S.winner = 0; S.winCells = [];
     S.turn = p;
+  }
+  function undo() {
+    if (!canUndo()) return;
+    undoOne();
+    if (vsCpu()) while (S.moves.length && S.turn === 2) undoOne();
     save();
+    scheduleCpu();
     render();
   }
 
+  function clearBoard() {
+    S.board = Array(CELLS).fill(0);
+    S.moves = []; S.winner = 0; S.winCells = [];
+    S.turn = S.starter;
+  }
   function newGame() {
     const wasInProgress = S.moves.length && !S.winner;
-    S.board = Array(COLS * ROWS).fill(0);
-    S.moves = []; S.winner = 0; S.winCells = [];
     if (!wasInProgress) S.starter = 3 - S.starter;
-    S.turn = S.starter;
+    clearBoard();
     save();
+    scheduleCpu();
+    render();
+  }
+  function setMode(m) {
+    if (m === S.mode) return;
+    S.mode = m;
+    clearBoard();
+    save();
+    scheduleCpu();
+    render();
+  }
+  function setLevel(l) {
+    if (l === S.level) return;
+    S.level = l;
+    if (vsCpu()) clearBoard();
+    save();
+    scheduleCpu();
     render();
   }
 
-  const nameOf = p => (S.names[p - 1] || "").trim() || (p === 1 ? "Red" : "Yellow");
+  const nameOf = p => vsCpu() && p === 2 ? "Computer" : (S.names[p - 1] || "").trim() || (p === 1 ? "Red" : "Yellow");
+
+  function statusText() {
+    if (S.winner === 3) return "Board's full. It's a draw.";
+    if (vsCpu()) {
+      if (S.winner === 1) return "You beat the computer!";
+      if (S.winner === 2) return "The computer wins.";
+      return S.turn === 1 ? "Your turn" : "Computer is thinking…";
+    }
+    if (S.winner) return `${nameOf(S.winner)} wins!`;
+    return `${nameOf(S.turn)}'s turn`;
+  }
 
   function render(dropped = -1, fall = 0) {
     S.board.forEach((v, i) => {
@@ -397,22 +570,30 @@ h1 .mini i:nth-child(even) { background: var(--p2); }
     $("board").classList.toggle("over", S.winner === 1 || S.winner === 2);
     colEls.forEach((b, c) => {
       const full = S.board[c] !== 0;
-      b.disabled = !!S.winner || full;
+      b.disabled = !!S.winner || full || thinking;
       b.setAttribute("aria-label", `Column ${c + 1}${full ? ", full" : ""}`);
     });
     const st = $("status");
-    if (S.winner === 3) { st.dataset.p = "0"; $("statusText").textContent = "Board's full. It's a draw."; }
-    else if (S.winner) { st.dataset.p = S.winner; $("statusText").textContent = `${nameOf(S.winner)} wins!`; }
-    else { st.dataset.p = S.turn; $("statusText").textContent = `${nameOf(S.turn)}'s turn`; }
+    st.dataset.p = S.winner === 3 ? "0" : (S.winner || S.turn);
+    $("statusText").textContent = statusText();
     $("aim").dataset.p = S.turn;
     $("card1").classList.toggle("active", !S.winner && S.turn === 1);
     $("card2").classList.toggle("active", !S.winner && S.turn === 2);
-    $("wins1").textContent = S.scores[0];
-    $("wins2").textContent = S.scores[1];
-    $("draws").textContent = S.scores[2];
+    const t = tally();
+    $("wins1").textContent = t[0];
+    $("wins2").textContent = t[1];
+    $("draws").textContent = t[2];
     if (document.activeElement !== $("name1")) $("name1").value = S.names[0];
-    if (document.activeElement !== $("name2")) $("name2").value = S.names[1];
-    $("undo").disabled = !S.moves.length;
+    const n2 = $("name2");
+    n2.readOnly = vsCpu();
+    if (vsCpu()) n2.value = "Computer";
+    else if (document.activeElement !== n2) n2.value = S.names[1];
+    n2.setAttribute("aria-label", vsCpu() ? "Computer opponent" : "Yellow player's name");
+    $("hint").textContent = vsCpu() ? "You're red. Tap a column." : "Tap a column. Pass the phone.";
+    document.querySelectorAll("[data-mode]").forEach(b => b.setAttribute("aria-pressed", b.dataset.mode === S.mode));
+    document.querySelectorAll("[data-level]").forEach(b => b.setAttribute("aria-pressed", b.dataset.level === S.level));
+    $("levels").hidden = !vsCpu();
+    $("undo").disabled = !canUndo();
     $("newGame").textContent = S.winner ? "Play again" : "New game";
     aimAt(-1);
   }
@@ -428,7 +609,7 @@ h1 .mini i:nth-child(even) { background: var(--p2); }
     }
     clearTimeout(resetArmed); resetArmed = null;
     b.textContent = "Reset scores"; b.classList.remove("confirm");
-    S.scores = [0, 0, 0];
+    tally().fill(0);
     save(); render();
   }
 
@@ -437,18 +618,21 @@ h1 .mini i:nth-child(even) { background: var(--p2); }
     build();
     [1, 2].forEach(p => {
       const el = $("name" + p);
-      el.addEventListener("input", () => { S.names[p - 1] = el.value; save(); render(); });
-      el.addEventListener("blur", () => { if (!el.value.trim()) { S.names[p - 1] = p === 1 ? "Red" : "Yellow"; save(); render(); } });
+      el.addEventListener("input", () => { if (el.readOnly) return; S.names[p - 1] = el.value; save(); render(); });
+      el.addEventListener("blur", () => { if (el.readOnly) return; if (!el.value.trim()) { S.names[p - 1] = p === 1 ? "Red" : "Yellow"; save(); render(); } });
       el.addEventListener("keydown", e => { if (e.key === "Enter") el.blur(); });
     });
+    document.querySelectorAll("[data-mode]").forEach(b => b.addEventListener("click", () => setMode(b.dataset.mode)));
+    document.querySelectorAll("[data-level]").forEach(b => b.addEventListener("click", () => setLevel(b.dataset.level)));
     $("undo").addEventListener("click", undo);
     $("newGame").addEventListener("click", newGame);
     $("resetScores").addEventListener("click", resetScores);
     document.addEventListener("keydown", e => {
       if (e.target.tagName === "INPUT") return;
       const n = parseInt(e.key, 10);
-      if (n >= 1 && n <= 7) drop(n - 1);
+      if (n >= 1 && n <= 7) humanDrop(n - 1);
     });
+    scheduleCpu();
     render();
     window.claude?.hot?.snapshot?.(() => ({ state: S }));
   }
