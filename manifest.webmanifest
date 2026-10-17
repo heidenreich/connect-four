@@ -1,0 +1,16 @@
+{
+  "name": "Connect Four",
+  "short_name": "Connect 4",
+  "description": "Connect Four for one phone: pass it between two players, or play the computer.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#eaeef7",
+  "theme_color": "#eaeef7",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

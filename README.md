@@ -19,3 +19,10 @@ Tap a column to drop a disc, then hand the phone over. First to line up four in 
 It's a single file with no build step. Open `index.html` in any browser.
 
 To get a link you can open on any phone, turn on GitHub Pages: **Settings → Pages → Deploy from a branch → `main` / root**.
+
+## Add it to your home screen
+
+- **iPhone (Safari):** open the link, tap Share, then **Add to Home Screen**.
+- **Android (Chrome):** open the link, tap the ⋮ menu, then **Add to Home screen** (or **Install app**).
+
+It opens full screen like an app. On iPhone, the home-screen version keeps its own scores, separate from the ones in Safari.
