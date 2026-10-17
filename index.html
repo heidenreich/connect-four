@@ -318,7 +318,11 @@ h1 .mini i:nth-child(even) { background: var(--p2); }
       const saved = JSON.parse(localStorage.getItem(KEY));
       if (saved && Array.isArray(saved.board) && saved.board.length === CELLS) {
         const base = fresh();
-        return { ...base, ...saved, cpuScores: { ...base.cpuScores, ...(saved.cpuScores || {}) } };
+        const s = { ...base, ...saved, cpuScores: { ...base.cpuScores, ...(saved.cpuScores || {}) } };
+        if (!["easy", "medium", "hard"].includes(s.level)) s.level = base.level;
+        const filled = s.board.filter(Boolean).length;
+        if (!Array.isArray(s.moves) || s.moves.length !== filled) Object.assign(s, { board: base.board, moves: [], winner: 0, winCells: [], turn: s.starter });
+        return s;
       }
     } catch (e) {}
     return fresh();
@@ -445,7 +449,7 @@ h1 .mini i:nth-child(even) { background: var(--p2); }
     for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
       const d = document.createElement("div");
       d.className = "disc";
-      d.addEventListener("animationend", e => { if (e.animationName === "settle" || e.animationName === "drop") d.classList.remove("dropping"); });
+      d.addEventListener("animationend", e => { if (e.animationName === "settle") d.classList.remove("dropping"); });
       $("discs").appendChild(d);
       discEls.push(d);
     }
@@ -497,8 +501,8 @@ h1 .mini i:nth-child(even) { background: var(--p2); }
     const i = S.moves.pop();
     const p = S.board[i];
     S.board[i] = 0;
-    if (S.winner === 3) tally()[2]--;
-    else if (S.winner) tally()[S.winner - 1]--;
+    const k = S.winner === 3 ? 2 : S.winner - 1;
+    if (S.winner && tally()[k] > 0) tally()[k]--;
     S.winner = 0; S.winCells = [];
     S.turn = p;
   }
@@ -512,13 +516,12 @@ h1 .mini i:nth-child(even) { background: var(--p2); }
   }
 
   function clearBoard() {
+    if (S.winner) S.starter = 3 - S.starter;
     S.board = Array(CELLS).fill(0);
     S.moves = []; S.winner = 0; S.winCells = [];
     S.turn = S.starter;
   }
   function newGame() {
-    const wasInProgress = S.moves.length && !S.winner;
-    if (!wasInProgress) S.starter = 3 - S.starter;
     clearBoard();
     save();
     scheduleCpu();
@@ -628,7 +631,7 @@ h1 .mini i:nth-child(even) { background: var(--p2); }
     $("newGame").addEventListener("click", newGame);
     $("resetScores").addEventListener("click", resetScores);
     document.addEventListener("keydown", e => {
-      if (e.target.tagName === "INPUT") return;
+      if (e.target.tagName === "INPUT" || e.ctrlKey || e.metaKey || e.altKey || e.repeat) return;
       const n = parseInt(e.key, 10);
       if (n >= 1 && n <= 7) humanDrop(n - 1);
     });
