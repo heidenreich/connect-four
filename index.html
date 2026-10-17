@@ -1,0 +1,460 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Connect Four</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Nunito+Sans:opsz,wght@6..12,400;6..12,600;6..12,700&display=swap">
+<style>
+/* Layout: one phone-width column — scoreboard, board, controls — sized to fit one screen */
+:root {
+  --bg: #eaeef7;
+  --surface: #ffffff;
+  --fg: #172036;
+  --muted: #5a6582;
+  --line: #d3d9e8;
+  --board: #2350d6;
+  --board-edge: #183c9f;
+  --hole: #dfe5f2;
+  --p1: #e5484d;
+  --p1-deep: #b52f34;
+  --p2: #f5b800;
+  --p2-deep: #c48f00;
+  --focus: #2350d6;
+  --font-display: "Fredoka", "Trebuchet MS", system-ui, sans-serif;
+  --font-body: "Nunito Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0d1322; --surface: #172036; --fg: #edf1fb; --muted: #9aa6c4; --line: #27324d;
+    --board: #2a5be8; --board-edge: #1a3c9e; --hole: #0a1020; --focus: #8fb0ff;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0d1322; --surface: #172036; --fg: #edf1fb; --muted: #9aa6c4; --line: #27324d;
+  --board: #2a5be8; --board-edge: #1a3c9e; --hole: #0a1020; --focus: #8fb0ff;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; }
+:root { padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); }
+html, body { height: 100%; }
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-body);
+  font-size: 16px;
+  -webkit-tap-highlight-color: transparent;
+}
+.wrap {
+  max-width: 520px;
+  margin: 0 auto;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 16px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+h1 {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 1.75rem;
+  letter-spacing: -0.01em;
+  margin: 0;
+  line-height: 1;
+  display: flex; align-items: center; gap: 8px;
+}
+h1 .mini { display: inline-flex; gap: 3px; }
+h1 .mini i { width: 12px; height: 12px; border-radius: 50%; display: block; }
+h1 .mini i:nth-child(odd) { background: var(--p1); }
+h1 .mini i:nth-child(even) { background: var(--p2); }
+.hint { margin: 0; color: var(--muted); font-size: 0.875rem; }
+
+/* Scoreboard */
+.scores { display: grid; grid-template-columns: 1fr auto 1fr; gap: 10px; align-items: stretch; }
+.player {
+  background: var(--surface);
+  border: 2px solid var(--line);
+  border-radius: 14px;
+  padding: 10px 12px;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-rows: auto auto;
+  column-gap: 10px;
+  align-items: center;
+  min-width: 0;
+  transition: border-color .2s, box-shadow .2s;
+}
+.player.active { border-color: var(--pc); box-shadow: 0 0 0 3px color-mix(in srgb, var(--pc) 25%, transparent); }
+.player[data-p="1"] { --pc: var(--p1); --pd: var(--p1-deep); }
+.player[data-p="2"] { --pc: var(--p2); --pd: var(--p2-deep); }
+.chip {
+  grid-row: 1 / span 2;
+  width: 30px; height: 30px; border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, color-mix(in srgb, var(--pc) 60%, white) 0 18%, var(--pc) 45%, var(--pd) 100%);
+}
+.player input {
+  font: 600 0.95rem var(--font-body);
+  color: var(--fg);
+  background: transparent;
+  border: 0;
+  border-bottom: 1px dashed transparent;
+  padding: 0;
+  width: 100%;
+  min-width: 0;
+}
+.player input:hover { border-bottom-color: var(--line); }
+.player input:focus { outline: none; border-bottom-color: var(--focus); }
+.wins { font-family: var(--font-display); font-weight: 600; font-size: 1.5rem; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.wins small { font-family: var(--font-body); font-size: 0.7rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin-left: 4px; }
+.draws { align-self: center; text-align: center; color: var(--muted); font-size: 0.7rem; letter-spacing: .08em; text-transform: uppercase; font-weight: 700; }
+.draws b { display: block; font-family: var(--font-display); font-size: 1.1rem; color: var(--fg); letter-spacing: 0; font-variant-numeric: tabular-nums; }
+
+/* Status */
+.status {
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  min-height: 44px;
+  font-family: var(--font-display); font-weight: 600; font-size: 1.25rem;
+  text-align: center; text-wrap: balance;
+}
+.status .chip { width: 22px; height: 22px; flex: none; }
+.status[data-p="1"] { --pc: var(--p1); --pd: var(--p1-deep); }
+.status[data-p="2"] { --pc: var(--p2); --pd: var(--p2-deep); }
+.status[data-p="0"] .chip { display: none; }
+
+/* Board */
+.board-frame {
+  background: var(--board);
+  border-radius: 18px;
+  padding: 3%;
+  box-shadow: 0 6px 0 var(--board-edge), 0 14px 30px -12px rgba(10, 25, 80, .5);
+}
+.board {
+  position: relative;
+  width: 100%;
+  max-width: 100%;
+  aspect-ratio: 7 / 6;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--hole);
+}
+.discs, .holes, .cols { position: absolute; inset: 0; display: grid; grid-template-columns: repeat(7, 1fr); }
+.discs { grid-template-rows: repeat(6, 1fr); }
+.holes {
+  pointer-events: none;
+  background-image: radial-gradient(circle closest-side, transparent 80%, rgba(0,0,0,.18) 81%, var(--board) 87%);
+  background-size: calc(100% / 7) calc(100% / 6);
+}
+.disc { --c: transparent; --d: transparent; position: relative; }
+.disc.p1 { --c: var(--p1); --d: var(--p1-deep); }
+.disc.p2 { --c: var(--p2); --d: var(--p2-deep); }
+.disc.p1, .disc.p2 {
+  background: radial-gradient(circle closest-side,
+    color-mix(in srgb, var(--c) 92%, white) 0 52%,
+    var(--d) 55% 60%,
+    var(--c) 63% 82%,
+    transparent 84%);
+}
+.disc.dropping { animation: drop calc(140ms + var(--fall) * 55ms) cubic-bezier(.45, 0, 1, 1) both, settle 180ms ease-out calc(140ms + var(--fall) * 55ms); }
+@keyframes drop { from { transform: translateY(calc(var(--fall) * -100%)); } to { transform: translateY(0); } }
+@keyframes settle { 0% { transform: translateY(0); } 40% { transform: translateY(-9%); } 100% { transform: translateY(0); } }
+.disc.win::after {
+  content: ""; position: absolute; inset: 0;
+  background: radial-gradient(circle closest-side, transparent 30%, #fff 33% 41%, transparent 44%);
+  animation: pulse 1.1s ease-in-out infinite alternate;
+}
+@keyframes pulse { from { opacity: .55; } to { opacity: 1; } }
+.board.over .disc:not(.win) { opacity: .45; transition: opacity .4s .3s; }
+
+.cols button {
+  appearance: none; border: 0; margin: 0; padding: 0;
+  background: transparent;
+  cursor: pointer;
+  position: relative;
+}
+.cols button:disabled { cursor: default; }
+.cols button:focus-visible { outline: 3px solid #fff; outline-offset: -3px; border-radius: 6px; }
+@media (hover: hover) {
+  .cols button:not(:disabled):hover { background: rgba(255, 255, 255, .10); }
+}
+
+/* Ghost disc above the board shows whose turn it is and which column */
+.aim { display: grid; grid-template-columns: repeat(7, 1fr); padding-inline: 3%; height: 0; margin-bottom: -6px; }
+.aim span { aspect-ratio: 1; transform: translateY(-100%); opacity: 0; transition: opacity .12s; }
+.aim span.on { opacity: .9; background: radial-gradient(circle closest-side, var(--pc) 0 62%, transparent 66%); }
+.aim[data-p="1"] { --pc: var(--p1); }
+.aim[data-p="2"] { --pc: var(--p2); }
+.board-zone { padding-top: calc((100% - 6%) / 7 * 0.7); position: relative; }
+.board-zone .aim { position: absolute; top: calc((100% - 6%) / 7 * 0.7); left: 0; right: 0; }
+
+/* Controls */
+.controls { display: flex; gap: 10px; }
+.controls button {
+  flex: 1;
+  font: 700 1rem var(--font-body);
+  min-height: 48px;
+  border-radius: 12px;
+  border: 2px solid var(--line);
+  background: var(--surface);
+  color: var(--fg);
+  cursor: pointer;
+}
+.controls button.primary { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+.controls button:disabled { opacity: .45; cursor: default; }
+.controls button:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+.foot { margin: 0; text-align: center; color: var(--muted); font-size: 0.8rem; }
+.reset-scores { background: none; border: 0; color: var(--muted); font: inherit; text-decoration: underline; cursor: pointer; padding: 4px; }
+.reset-scores.confirm { color: var(--p1-deep); font-weight: 700; }
+
+@media (max-width: 360px) {
+  .scores { grid-template-columns: 1fr 1fr; }
+  .draws { grid-column: 1 / -1; grid-row: 2; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .disc.dropping, .disc.win::after { animation: none; }
+}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header>
+    <h1><span class="mini" aria-hidden="true"><i></i><i></i><i></i><i></i></span>Connect Four</h1>
+    <p class="hint">Tap a column. Pass the phone.</p>
+  </header>
+
+  <section class="scores" aria-label="Scoreboard">
+    <div class="player" data-p="1" id="card1">
+      <span class="chip" aria-hidden="true"></span>
+      <input id="name1" maxlength="14" aria-label="Red player's name" autocomplete="off">
+      <div class="wins"><span id="wins1">0</span><small>wins</small></div>
+    </div>
+    <div class="draws">Draws<b id="draws">0</b></div>
+    <div class="player" data-p="2" id="card2">
+      <span class="chip" aria-hidden="true"></span>
+      <input id="name2" maxlength="14" aria-label="Yellow player's name" autocomplete="off">
+      <div class="wins"><span id="wins2">0</span><small>wins</small></div>
+    </div>
+  </section>
+
+  <div class="status" id="status" data-p="1" aria-live="polite"><span class="chip" aria-hidden="true"></span><span id="statusText"></span></div>
+
+  <div class="board-zone">
+    <div class="aim" id="aim" aria-hidden="true"></div>
+    <div class="board-frame">
+      <div class="board" id="board">
+        <div class="discs" id="discs"></div>
+        <div class="holes"></div>
+        <div class="cols" id="cols"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="controls">
+    <button id="undo" type="button">Undo move</button>
+    <button id="newGame" type="button" class="primary">New game</button>
+  </div>
+  <p class="foot">Whoever didn't start goes first next game. <button class="reset-scores" id="resetScores" type="button">Reset scores</button></p>
+</div>
+
+<script>
+(() => {
+  const COLS = 7, ROWS = 6;
+  const KEY = "connect-four-v1";
+  const $ = id => document.getElementById(id);
+
+  let S;
+  const fresh = () => ({
+    board: Array(COLS * ROWS).fill(0),
+    moves: [],
+    starter: 1,
+    turn: 1,
+    winner: 0,      // 0 = playing, 1/2 = winner, 3 = draw
+    winCells: [],
+    scores: [0, 0, 0], // p1 wins, p2 wins, draws
+    names: ["Red", "Yellow"],
+  });
+
+  function load(seed) {
+    if (seed && seed.board) return seed;
+    try {
+      const saved = JSON.parse(localStorage.getItem(KEY));
+      if (saved && Array.isArray(saved.board) && saved.board.length === COLS * ROWS) return { ...fresh(), ...saved };
+    } catch (e) {}
+    return fresh();
+  }
+  function save() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) {} }
+
+  const discEls = [], colEls = [], aimEls = [];
+  function build() {
+    for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
+      const d = document.createElement("div");
+      d.className = "disc";
+      d.addEventListener("animationend", e => { if (e.animationName === "settle" || e.animationName === "drop") d.classList.remove("dropping"); });
+      $("discs").appendChild(d);
+      discEls.push(d);
+    }
+    for (let c = 0; c < COLS; c++) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.addEventListener("click", () => drop(c));
+      b.addEventListener("pointerenter", () => aimAt(c));
+      b.addEventListener("focus", () => aimAt(c));
+      b.addEventListener("pointerleave", () => aimAt(-1));
+      b.addEventListener("blur", () => aimAt(-1));
+      $("cols").appendChild(b);
+      colEls.push(b);
+      const s = document.createElement("span");
+      $("aim").appendChild(s);
+      aimEls.push(s);
+    }
+  }
+
+  function aimAt(c) {
+    aimEls.forEach((s, i) => s.classList.toggle("on", i === c && !S.winner && S.board[c] === 0));
+  }
+
+  function lowestEmpty(c) {
+    for (let r = ROWS - 1; r >= 0; r--) if (!S.board[r * COLS + c]) return r;
+    return -1;
+  }
+
+  function lineThrough(r, c, p) {
+    const dirs = [[0, 1], [1, 0], [1, 1], [1, -1]];
+    for (const [dr, dc] of dirs) {
+      const cells = [[r, c]];
+      for (const s of [1, -1]) {
+        let rr = r + dr * s, cc = c + dc * s;
+        while (rr >= 0 && rr < ROWS && cc >= 0 && cc < COLS && S.board[rr * COLS + cc] === p) {
+          cells.push([rr, cc]); rr += dr * s; cc += dc * s;
+        }
+      }
+      if (cells.length >= 4) return cells.map(([a, b]) => a * COLS + b);
+    }
+    return null;
+  }
+
+  function drop(c) {
+    if (S.winner) return;
+    const r = lowestEmpty(c);
+    if (r < 0) return;
+    const i = r * COLS + c, p = S.turn;
+    S.board[i] = p;
+    S.moves.push(i);
+    const win = lineThrough(r, c, p);
+    if (win) { S.winner = p; S.winCells = win; S.scores[p - 1]++; }
+    else if (S.moves.length === COLS * ROWS) { S.winner = 3; S.scores[2]++; }
+    else S.turn = 3 - p;
+    save();
+    render(i, r + 1);
+    if (navigator.vibrate) try { navigator.vibrate(12); } catch (e) {}
+  }
+
+  function undo() {
+    if (!S.moves.length) return;
+    const i = S.moves.pop();
+    const p = S.board[i];
+    S.board[i] = 0;
+    if (S.winner === 3) S.scores[2]--;
+    else if (S.winner) S.scores[S.winner - 1]--;
+    S.winner = 0; S.winCells = [];
+    S.turn = p;
+    save();
+    render();
+  }
+
+  function newGame() {
+    const wasInProgress = S.moves.length && !S.winner;
+    S.board = Array(COLS * ROWS).fill(0);
+    S.moves = []; S.winner = 0; S.winCells = [];
+    if (!wasInProgress) S.starter = 3 - S.starter;
+    S.turn = S.starter;
+    save();
+    render();
+  }
+
+  const nameOf = p => (S.names[p - 1] || "").trim() || (p === 1 ? "Red" : "Yellow");
+
+  function render(dropped = -1, fall = 0) {
+    S.board.forEach((v, i) => {
+      const d = discEls[i];
+      d.classList.toggle("p1", v === 1);
+      d.classList.toggle("p2", v === 2);
+      d.classList.toggle("win", S.winCells.includes(i));
+      if (i === dropped) {
+        d.classList.remove("dropping");
+        void d.offsetWidth;
+        d.style.setProperty("--fall", fall);
+        d.classList.add("dropping");
+      }
+    });
+    $("board").classList.toggle("over", S.winner === 1 || S.winner === 2);
+    colEls.forEach((b, c) => {
+      const full = S.board[c] !== 0;
+      b.disabled = !!S.winner || full;
+      b.setAttribute("aria-label", `Column ${c + 1}${full ? ", full" : ""}`);
+    });
+    const st = $("status");
+    if (S.winner === 3) { st.dataset.p = "0"; $("statusText").textContent = "Board's full. It's a draw."; }
+    else if (S.winner) { st.dataset.p = S.winner; $("statusText").textContent = `${nameOf(S.winner)} wins!`; }
+    else { st.dataset.p = S.turn; $("statusText").textContent = `${nameOf(S.turn)}'s turn`; }
+    $("aim").dataset.p = S.turn;
+    $("card1").classList.toggle("active", !S.winner && S.turn === 1);
+    $("card2").classList.toggle("active", !S.winner && S.turn === 2);
+    $("wins1").textContent = S.scores[0];
+    $("wins2").textContent = S.scores[1];
+    $("draws").textContent = S.scores[2];
+    if (document.activeElement !== $("name1")) $("name1").value = S.names[0];
+    if (document.activeElement !== $("name2")) $("name2").value = S.names[1];
+    $("undo").disabled = !S.moves.length;
+    $("newGame").textContent = S.winner ? "Play again" : "New game";
+    aimAt(-1);
+  }
+
+  let resetArmed = null;
+  function resetScores() {
+    const b = $("resetScores");
+    if (!resetArmed) {
+      b.textContent = "Tap again to reset";
+      b.classList.add("confirm");
+      resetArmed = setTimeout(() => { resetArmed = null; b.textContent = "Reset scores"; b.classList.remove("confirm"); }, 3000);
+      return;
+    }
+    clearTimeout(resetArmed); resetArmed = null;
+    b.textContent = "Reset scores"; b.classList.remove("confirm");
+    S.scores = [0, 0, 0];
+    save(); render();
+  }
+
+  function start(data) {
+    S = load(data && data.state);
+    build();
+    [1, 2].forEach(p => {
+      const el = $("name" + p);
+      el.addEventListener("input", () => { S.names[p - 1] = el.value; save(); render(); });
+      el.addEventListener("blur", () => { if (!el.value.trim()) { S.names[p - 1] = p === 1 ? "Red" : "Yellow"; save(); render(); } });
+      el.addEventListener("keydown", e => { if (e.key === "Enter") el.blur(); });
+    });
+    $("undo").addEventListener("click", undo);
+    $("newGame").addEventListener("click", newGame);
+    $("resetScores").addEventListener("click", resetScores);
+    document.addEventListener("keydown", e => {
+      if (e.target.tagName === "INPUT") return;
+      const n = parseInt(e.key, 10);
+      if (n >= 1 && n <= 7) drop(n - 1);
+    });
+    render();
+    window.claude?.hot?.snapshot?.(() => ({ state: S }));
+  }
+
+  window.claude?.hot?.ready ? window.claude.hot.ready(start) : start(window.claude?.hot?.data ?? {});
+})();
+</script>
+</body>
+</html>
